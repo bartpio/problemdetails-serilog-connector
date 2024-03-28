@@ -7,7 +7,7 @@
 		<RootNamespace>Serilog.AspNetCore</RootNamespace>
 		<Description>Serilog support for ASP.NET Core logging alongside Problem Details</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
-		<VersionPrefix>8.0.0</VersionPrefix>
+		<VersionPrefix>8.0.1</VersionPrefix>
 		<PackageReleaseNotes>Add net8.0</PackageReleaseNotes>
 		<Authors>problemdetails-serilog-connector Contributors</Authors>
 		<PackageProjectUrl>https://github.com/bartpio/problemdetails-serilog-connector</PackageProjectUrl>
@@ -15,6 +15,9 @@
 		<RepositoryType>git</RepositoryType>
 		<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
 		<PackageTags>serilog;aspnet;aspnetcore;middleware;error;exception;RFC7807</PackageTags>
+		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 	</PropertyGroup>
 
 	<ItemGroup>
