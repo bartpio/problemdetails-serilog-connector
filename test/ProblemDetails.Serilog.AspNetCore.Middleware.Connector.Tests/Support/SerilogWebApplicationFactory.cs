@@ -16,12 +16,29 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Hosting;
+using Serilog;
+using Serilog.Core;
 
 namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests.Support;
 
 public class SerilogWebApplicationFactory : WebApplicationFactory<TestStartup>
 {
-    protected override IWebHostBuilder CreateWebHostBuilder() => new WebHostBuilder().UseStartup<TestStartup>();
+    private readonly Lazy<Logger> _logger;
+
+    public SerilogSink Sink { get; } = new SerilogSink();
+
+    public Logger Logger => _logger.Value;
+
+    public SerilogWebApplicationFactory()
+    {
+        _logger = new(() => new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .WriteTo.Sink(Sink)
+            .CreateLogger(), LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    protected override IHostBuilder CreateHostBuilder() => Host.CreateDefaultBuilder().UseSerilog(Logger, true);
+
     protected override void ConfigureWebHost(IWebHostBuilder builder) => builder.UseContentRoot(".");
 }
 

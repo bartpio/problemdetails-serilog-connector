@@ -15,15 +15,15 @@
 // limitations under the License.
 
 using System.Globalization;
-using Hellang.Middleware.ProblemDetails;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests.Support;
-using Serilog;
 using Serilog.AspNetCore;
+using Serilog.Events;
 using Serilog.Filters;
 using Xunit;
 
@@ -32,15 +32,9 @@ using Xunit;
 
 namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests
 {
-    public class ProblemDetailsConnectorApplicationBuilderExtensionsTests : IClassFixture<SerilogWebApplicationFactory>
+    public class ProblemDetailsConnectorApplicationBuilderExtensionsTests
     {
-        readonly SerilogWebApplicationFactory _web;
-
-        public ProblemDetailsConnectorApplicationBuilderExtensionsTests(SerilogWebApplicationFactory web)
-        {
-            _web = web;
-        }
-
+        private readonly SerilogWebApplicationFactory _web = new();
 
         [Fact]
         public async Task RequestLoggingMiddlewareShouldEnrichWithCollectedExceptionIfNoUnhandledException()
@@ -88,16 +82,7 @@ namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests
         [Fact]
         public async Task ProblemDetailsShouldNotLogWhatItWouldHaveConsideredUnhandledByDefault()
         {
-            var exception = new UnhandledException("something went wrong"); // actually handled thanks to ProblemDetails being engaged
-            var (sink, web) = Setup(options =>
-            {
-                // don't artificially SetException here for this scenario
-            }, hc =>
-            {
-                throw exception; // not handled here, but will be by ProblemDetails
-            });
-
-            await web.CreateClient().GetAsync("/resource");
+            var (exception, sink) = await RunSomethingWentWrongScenario();
 
             var completionEvent = sink.Writes.First(logEvent => Matching.FromSource("Serilog.AspNetCore.RequestLoggingMiddleware")(logEvent));
             Assert.Same(exception, completionEvent.Exception);
@@ -109,9 +94,62 @@ namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests
             Assert.Single(sink.Writes.Where(x => exception.Equals(x.Exception)));
         }
 
-        WebApplicationFactory<TestStartup> Setup(
-            ILogger logger,
-            bool dispose,
+        private async Task<(UnhandledException exception, SerilogSink sink)> RunSomethingWentWrongScenario(Action<HttpContext>? preExceptionCallback = null)
+        {
+            var exception = new UnhandledException("something went wrong");
+            var (sink, web) = Setup(options =>
+            {
+                // don't artificially SetException here for this scenario
+            }, hc =>
+            {
+                preExceptionCallback?.Invoke(hc);
+                throw exception; // not handled here, but will be by ProblemDetails
+            });
+
+            await web.CreateClient().GetAsync("/resource");
+            return (exception, sink);
+        }
+
+        [Fact]
+        public async Task ProblemDetailsWorksAlongsideInfo()
+        {
+            var (exception, sink) = await RunSomethingWentWrongScenario(hc =>
+            {
+                var logger = hc.RequestServices.GetRequiredService<ILogger<ProblemDetailsConnectorApplicationBuilderExtensionsTests>>();
+                logger.LogInformation("some info");
+            });
+
+            var completionEvent = sink.Writes.First(logEvent => Matching.FromSource("Serilog.AspNetCore.RequestLoggingMiddleware")(logEvent));
+            Assert.Same(exception, completionEvent.Exception);
+            Assert.Equal("indeed some string", GetString(completionEvent, "SomeString"));
+
+            // ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests.ProblemDetailsConnectorApplicationBuilderExtensionsTests
+            var source = GetType().FullName ?? throw new InvalidOperationException("test fixture type must have a name");
+            var infoEvent = sink.Writes.First(logEvent => Matching.FromSource(source)(logEvent));
+            Assert.Null(infoEvent.Exception);
+            Assert.Equal("some info", infoEvent.RenderMessage(CultureInfo.InvariantCulture));
+
+            // EnrichDiagnosticContext applies only to completion event
+            Assert.Null(GetString(infoEvent, "SomeString"));
+        }
+
+        private string? GetString(LogEvent logEvent, string key)
+        {
+            try
+            {
+                return logEvent.Properties[key] switch
+                {
+                    ScalarValue scalar => scalar.Value as string,
+                    _ => throw new InvalidOperationException("log event property isn't scalar")
+                };
+            }
+            catch (KeyNotFoundException)
+            {
+                return null;
+            }
+        }
+
+        (SerilogSink, WebApplicationFactory<TestStartup>) Setup(
             Action<RequestLoggingOptions>? configureOptions = null,
             Action<HttpContext>? actionCallback = null)
         {
@@ -124,10 +162,10 @@ namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests
 
                         sc.Configure<RequestLoggingOptions>(options =>
                         {
-                            options.Logger = logger;
+                            options.Logger = _web.Logger;
                             options.EnrichDiagnosticContext += (diagnosticContext, _) =>
                             {
-                                diagnosticContext.Set("SomeString", "string");
+                                diagnosticContext.Set("SomeString", "indeed some string");
                             };
                         });
                     })
@@ -139,25 +177,9 @@ namespace ProblemDetails.Serilog.AspNetCore.Middleware.Connector.Tests
                             actionCallback?.Invoke(ctx);
                             return Task.CompletedTask;
                         }); // 200 OK
-                    })
-                    .UseSerilog(logger, dispose));
+                    }));
 
-            return web;
-        }
-
-        (SerilogSink, WebApplicationFactory<TestStartup>) Setup(
-            Action<RequestLoggingOptions>? configureOptions = null,
-            Action<HttpContext>? actionCallback = null)
-        {
-            var sink = new SerilogSink();
-            var logger = new LoggerConfiguration()
-                .Enrich.FromLogContext()
-                .WriteTo.Sink(sink)
-                .CreateLogger();
-
-            var web = Setup(logger, true, configureOptions, actionCallback);
-
-            return (sink, web);
+            return (_web.Sink, web);
         }
 
         internal static void ConfigureProblemDetails(Hellang.Middleware.ProblemDetails.ProblemDetailsOptions options)
